@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  admin
+  client
+}
+
+enum TruckStatus {
+  available
+  busy
+  maintenance
+}
+
+enum BookingType {
+  export
+  import
+}
+
+enum BookingStatus {
+  draft
+  confirmed
+  missing_data
+  assigned
+  completed
+  cancelled
+}
+
+enum AssignmentType {
+  internal
+  external
+}
+
+enum SavingLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String?
+  email          String    @unique
+  passwordHash   String?   @map("password_hash")
+  role           UserRole  @default(client)
+  googleId       String?   @unique @map("google_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  accounts       Account[]
+  sessions       Session[]
+  bookings       Booking[] @relation("BookingCreator")
+  reports        DailyContainerReport[]
+  aiLogs         AiLog[]
+  auditLogs      AuditLog[]
+  assignments    TruckAssignment[] @relation("AssignmentUser")
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model InternalTruck {
+  id          String       @id @default(cuid())
+  teamName    String       @map("team_name")
+  truckNo     String       @unique @map("truck_no")
+  trailerNo   String?      @map("trailer_no")
+  status      TruckStatus  @default(available)
+  note        String?
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  assignments TruckAssignment[]
+
+  @@map("internal_trucks")
+}
+
+model ExternalTruckPrice {
+  id            String   @id @default(cuid())
+  vendorName    String   @map("vendor_name")
+  routeFrom     String   @map("route_from")
+  routeTo       String   @map("route_to")
+  containerType String?  @map("container_type")
+  price         Decimal  @db.Decimal(14, 2)
+  currency      String   @default("VND")
+  validFrom     DateTime @map("valid_from")
+  validTo       DateTime? @map("valid_to")
+  note          String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  assignments   TruckAssignment[]
+
+  @@index([routeFrom, routeTo, containerType])
+  @@map("external_truck_prices")
+}
+
+model Booking {
+  id                  String        @id @default(cuid())
+  bookingDate         DateTime      @map("booking_date")
+  bookingType         BookingType   @map("booking_type")
+  customerName        String        @map("customer_name")
+  fileNo              String?       @map("file_no")
+  bookingNo           String?       @map("booking_no")
+  containerNo         String?       @map("container_no")
+  containerCount      Int           @default(1) @map("container_count")
+  containerType       String?       @map("container_type")
+  shippingLine        String?       @map("shipping_line")
+  pickupLocation      String?       @map("pickup_location")
+  deliveryLocation    String?       @map("delivery_location")
+  emptyPickupYard     String?       @map("empty_pickup_yard")
+  emptyReturnYard     String?       @map("empty_return_yard")
+  portOfLoading       String?       @map("port_of_loading")
+  portOfDischarge     String?       @map("port_of_discharge")
+  stuffingDate        DateTime?     @map("stuffing_date")
+  deliveryDate        DateTime?     @map("delivery_date")
+  closingTime         DateTime?     @map("closing_time")
+  vesselDate          DateTime?     @map("vessel_date")
+  note                String?
+  status              BookingStatus @default(draft)
+  createdBy           String        @map("created_by")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+  creator             User          @relation("BookingCreator", fields: [createdBy], references: [id])
+  assignments         TruckAssignment[]
+
+  @@index([customerName])
+  @@index([bookingDate])
+  @@index([bookingNo, customerName, bookingDate])
+  @@index([fileNo, containerNo, customerName])
+  @@map("bookings")
+}
+
+model DailyContainerReport {
+  id                     String     @id @default(cuid())
+  reportDate             DateTime   @map("report_date")
+  totalContainers        Int        @map("total_containers")
+  totalExportContainers  Int        @map("total_export_containers")
+  totalImportContainers  Int        @map("total_import_containers")
+  reportText             String     @db.Text @map("report_text")
+  createdBy              String     @map("created_by")
+  aiModel                String?    @map("ai_model")
+  createdAt              DateTime   @default(now()) @map("created_at")
+  updatedAt              DateTime   @updatedAt @map("updated_at")
+  creator                User       @relation(fields: [createdBy], references: [id])
+  items                  ReportItem[]
+  reuseSuggestions       ReuseContainerSuggestion[]
+
+  @@index([reportDate])
+  @@map("daily_container_reports")
+}
+
+model ReportItem {
+  id                String      @id @default(cuid())
+  reportId          String      @map("report_id")
+  bookingType       BookingType @map("booking_type")
+  customerName      String      @map("customer_name")
+  bookingNo         String?     @map("booking_no")
+  containerNo       String?     @map("container_no")
+  containerCount    Int         @default(1) @map("container_count")
+  emptyPickupYard   String?     @map("empty_pickup_yard")
+  portOrYard        String?     @map("port_or_yard")
+  deliveryDate      DateTime?   @map("delivery_date")
+  shippingLine      String?     @map("shipping_line")
+  note              String?
+  createdAt         DateTime    @default(now()) @map("created_at")
+  report            DailyContainerReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("report_items")
+}
+
+model ReuseContainerSuggestion {
+  id                   String      @id @default(cuid())
+  reportId             String      @map("report_id")
+  importCustomer       String      @map("import_customer")
+  importContainerNo    String      @map("import_container_no")
+  exportCustomer       String      @map("export_customer")
+  exportBookingNo      String?     @map("export_booking_no")
+  shippingLine         String?     @map("shipping_line")
+  estimatedSavingLevel SavingLevel @map("estimated_saving_level")
+  conclusion           String      @db.Text
+  actionSuggestion     String      @db.Text @map("action_suggestion")
+  createdAt            DateTime    @default(now()) @map("created_at")
+  report               DailyContainerReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@map("reuse_container_suggestions")
+}
+
+model TruckAssignment {
+  id                String          @id @default(cuid())
+  bookingId         String          @map("booking_id")
+  selectedType      AssignmentType  @map("selected_type")
+  internalTruckId   String?         @map("internal_truck_id")
+  externalVendorId  String?         @map("external_vendor_id")
+  selectedPrice     Decimal?        @db.Decimal(14, 2) @map("selected_price")
+  reason            String          @db.Text
+  aiRecommendation  String?         @db.Text @map("ai_recommendation")
+  assignedBy        String          @map("assigned_by")
+  assignedAt        DateTime        @default(now()) @map("assigned_at")
+  aiModel           String?         @map("ai_model")
+  booking           Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  internalTruck     InternalTruck?  @relation(fields: [internalTruckId], references: [id])
+  externalVendor    ExternalTruckPrice? @relation(fields: [externalVendorId], references: [id])
+  assigner          User            @relation("AssignmentUser", fields: [assignedBy], references: [id])
+
+  @@index([assignedAt])
+  @@map("truck_assignments")
+}
+
+model AiSetting {
+  id             String   @id @default(cuid())
+  defaultModel   String   @map("default_model")
+  enabledModels  String[] @map("enabled_models")
+  apiKeyMasked   String?  @map("api_key_masked")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("ai_settings")
+}
+
+model AiLog {
+  id          String   @id @default(cuid())
+  userId      String?  @map("user_id")
+  modelName   String?  @map("model_name")
+  userMessage String   @db.Text @map("user_message")
+  aiResponse  String   @db.Text @map("ai_response")
+  actionType  String   @map("action_type")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@map("ai_logs")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?  @map("user_id")
+  action      String
+  entityType  String   @map("entity_type")
+  entityId    String?  @map("entity_id")
+  beforeData  Json?    @map("before_data")
+  afterData   Json?    @map("after_data")
+  createdAt   DateTime @default(now()) @map("created_at")
+  user        User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}
